@@ -6,25 +6,13 @@ Pipe any command through **peon** and get a sound notification when it finishes.
 nmap -sV 192.168.1.1 | peon
 ```
 
-Inspired by [PeonPing](https://github.com/PeonPing/peon-ping) - but designed as a simple CLI pipe, not a daemon. Works with any command, any OS.
+Inspired by [PeonPing](https://github.com/PeonPing/peon-ping), designed as a simple CLI pipe for any command.
 
 ## Install
 
 **One-liner (Linux / macOS / WSL2):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/install.sh | bash
-```
-
-**Or with wget:**
-```bash
-wget -qO- https://raw.githubusercontent.com/MELTzx/peon/main/install.sh | bash
-```
-
-**Manual install:**
-```bash
-mkdir -p ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/peon -o ~/.local/bin/peon
-chmod +x ~/.local/bin/peon
 ```
 
 **Uninstall:**
@@ -35,117 +23,95 @@ curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/uninstall.sh | bas
 ## Usage
 
 ```bash
-# Basic - plays "Zug Zug" when nmap finishes
+# Default sound (PeonReady1)
 nmap -sV 192.168.1.1 | peon
 
-# Random Orc voice
-make build | peon --pack orc
+# Pick a specific sound
+make build | peon -s zug_zug
+cargo test | peon -s BattlecruiserOperational
 
-# Random Terran sound (Starcraft)
-docker build . | peon --pack terran
+# Random sound from the library
+docker build . | peon --random
 
 # Desktop notification + sound
-cargo test | peon --notify
+npm install | peon --notify
 
-# Custom message
+# Custom message with notification
 ./long_job.sh | peon --notify -m "job done"
 
-# Custom sound file
-npm install | peon --sound ~/bell.wav
-
-# Silent (no sound, just stderr summary)
+# Silent (no sound, just summary)
 rsync -av src/ dest/ | peon --no-sound
 
-# Random sound from the big grab-bag pack
-pip install . | peon --pack mixed
-
-# List all sound packs
+# List all 159 available sounds
 peon --list
 
 # Full help
 peon --help
 ```
 
-## Shell Aliases
-
-Add to your `~/.bashrc` or `~/.zshrc`:
-
-```bash
-alias pp='peon --pack orc --notify'
-alias ppp='peon --pack mixed'
-alias ppc='peon --pack complete'
-```
-
 ## SSH + peon
 
 ```bash
-# Works perfectly - peon runs locally, sound plays locally
-ssh server "make build" | peon --pack orc
+ssh server "make build" | peon -s zug_zug
 ssh server "apt update" | peon --notify -m "apt update done"
 ```
-
-## Sound Packs
-
-| Pack | Count | Description |
-|------|-------|-------------|
-| `complete` | 4 | Peon completion sounds ("Zug Zug", "Goal Complete") |
-| `log` | 5 | "Approve", "Work Work", "Proud", "Not Bad", "Okie Dokie" |
-| `remind` | 8 | "Type Type Type", "Code Review Hard", "Human Weak" |
-| `slacking` | 4 | "Falling Behind", "Disappointed", "Half Day" |
-| `session` | 3 | "New Day", "Human Back", "Know The Rules" |
-| `terran` | 7 | Starcraft Terran unit voices |
-| `protoss` | 1 | Starcraft Protoss unit voices |
-| `zerg` | 1 | Starcraft Zerg unit voices |
-| `orc` | 17 | Warcraft 3 Orc/Peon voices |
-| `wc2` | 12 | Warcraft 2 Human/Sapper voices |
-| `mixed` | 97 | Starcraft, TF2, Helldivers, Dota sounds |
-
-Run `peon --list` to see every sound in each pack.
 
 ## How It Works
 
 1. Reads stdin and passes it through to stdout (your output works normally)
 2. Detects EOF (upstream command finished)
-3. Plays a random sound from the selected pack
+3. Plays the selected sound via ffplay
 4. Optionally sends a desktop notification
 5. Prints elapsed time and output size to stderr
+
+## Popular Sounds
+
+| Sound | Origin |
+|-------|--------|
+| `PeonReady1` | WC3 Peon (default) |
+| `zug_zug` | Peon classic |
+| `goal_complete` | Mission accomplished |
+| `BattlecruiserOperational` | Starcraft Terran |
+| `approve` | Peon approval |
+| `impressed` | Peon impressed |
+| `PeonWarcry1` | Orc peon war cry |
+| `KerriganReporting` | Starcraft Zerg |
+| `wc2sapper-kaboom` | WC2 Sapper |
+
+Run `peon --list` to see all 159 sounds.
 
 ## Platform Support
 
 | Platform | Audio Method |
 |----------|-------------|
-| Linux | paplay, aplay, ffplay, mpv, or SoX |
+| Linux | ffplay (ffmpeg) |
 | macOS | afplay |
-| WSL2 (WSLg) | paplay (native) |
-| WSL2 (older) | PowerShell SoundPlayer or Console.Beep |
-| Any (fallback) | Terminal bell `\a` |
+| WSL2 (WSLg) | paplay |
+| WSL2 (older) | PowerShell SoundPlayer |
 
 ## Requirements
 
-- **ffmpeg** (required for sound playback on most systems) - `sudo apt install ffmpeg`
+- **ffmpeg** (required for sound) - `sudo apt install ffmpeg`
 - Python 3.6+ (usually pre-installed)
-- No other dependencies
 
 ## Options
 
 ```
-  -s, --sound PATH     Custom sound file to play
-  -p, --pack PACK      Random sound from a sound pack
-  -r, --random         Random sound from the 'complete' pack
+  -s, --sound NAME     Play a specific sound (by name)
+  -r, --random         Play a random sound
       --no-sound       Skip sound, only print summary
-  -n, --notify         Send desktop notification (notify-send)
-  -m, --message TEXT   Custom notification message (with --notify)
+  -n, --notify         Send desktop notification
+  -m, --message TEXT   Custom notification message
       --volume 0-100   Sound volume (default: 80)
-      --beep           Force generate a beep (no sound pack needed)
-  -e, --exit-code      Read exit code from PEON_EXIT env var
-  -l, --list           List all sound packs and their sounds
+  -l, --list           List all available sounds
+  -v, --version        Show version
   -h, --help           Show help
 ```
 
 ## Credits
 
-- Sound packs sourced from [PeonPing/peon-ping](https://github.com/PeonPing/peon-ping) (MIT license)
-- Warcraft, Starcraft, TF2, Helldivers, Dota sounds are property of their respective owners
+- Sounds sourced from [PeonPing/peon-ping](https://github.com/PeonPing/peon-ping) (MIT license)
+- Game audio clips are property of their respective owners
 
 ## License
 

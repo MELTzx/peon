@@ -6,6 +6,7 @@ set -euo pipefail
 BOLD='\033[1m'
 GREEN='\033[32m'
 YELLOW='\033[33m'
+RED='\033[31m'
 DIM='\033[2m'
 RESET='\033[0m'
 
@@ -17,13 +18,9 @@ BRANCH="main"
 echo -e "${BOLD}${GREEN}peon${RESET} - command completion notifier"
 echo ""
 
-# Detect platform
-OS="$(uname -s)"
-ARCH="$(uname -m)"
+echo -e "  Platform: ${YELLOW}$(uname -s)${RESET} ($(uname -m))"
 
-echo -e "  Platform: ${YELLOW}${OS}${RESET} (${ARCH})"
-
-# Ensure install dir exists
+# Ensure dirs exist
 mkdir -p "${INSTALL_DIR}"
 mkdir -p "${SOUND_DIR}"
 
@@ -39,31 +36,27 @@ else
 fi
 chmod +x "${INSTALL_DIR}/peon"
 
-# Download sound packs
-echo -e "  Downloading ${GREEN}sound packs${RESET}..."
+# Download sounds (all flat in sounds/ dir)
+echo -e "  Downloading ${GREEN}sounds${RESET}..."
 
-PACKS=("complete" "log" "remind" "session_start" "slacking" "terran" "protoss" "zerg" "orc" "wc2-human" "mixed-games")
 SUCCESS=0
 FAIL=0
 
-for pack in "${PACKS[@]}"; do
-    mkdir -p "${SOUND_DIR}/${pack}"
-    # Get file list from GitHub API
-    files=$(curl -fsSL "https://api.github.com/repos/${REPO}/contents/sounds/${pack}" 2>/dev/null | grep '"name"' | sed 's/.*"name": "//;s/".*//' | grep -E '\.(mp3|wav|ogg|oga)$' || true)
-    
-    if [ -z "$files" ]; then
-        continue
-    fi
-    
+# Get file list from GitHub API
+files=$(curl -fsSL "https://api.github.com/repos/${REPO}/contents/sounds" 2>/dev/null \
+    | grep '"name"' | sed 's/.*"name": "//;s/".*//' \
+    | grep -E '\.(mp3|wav|ogg|oga)$' || true)
+
+if [ -n "$files" ]; then
     while IFS= read -r fname; do
-        if curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/sounds/${pack}/${fname}" \
-            -o "${SOUND_DIR}/${pack}/${fname}" 2>/dev/null; then
+        if curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/sounds/${fname}" \
+            -o "${SOUND_DIR}/${fname}" 2>/dev/null; then
             SUCCESS=$((SUCCESS + 1))
         else
             FAIL=$((FAIL + 1))
         fi
     done <<< "$files"
-done
+fi
 
 echo -e "  Sounds: ${GREEN}${SUCCESS} downloaded${RESET}${DIM}(${FAIL} failed)${RESET}"
 
@@ -74,15 +67,15 @@ else
     echo -e "  PATH: ${YELLOW}${INSTALL_DIR} not in PATH${RESET}"
     echo -e "  ${DIM}Add this to your ~/.bashrc or ~/.zshrc:${RESET}"
     echo -e "  ${DIM}  export PATH=\"\${HOME}/.local/bin:\$PATH\"${RESET}"
-    
-    # Auto-add to shell rc if possible
+
+    # Auto-add to shell rc
     SHELL_RC=""
     if [ -n "${ZSH_VERSION:-}" ]; then
         SHELL_RC="${HOME}/.zshrc"
     elif [ -n "${BASH_VERSION:-}" ]; then
         SHELL_RC="${HOME}/.bashrc"
     fi
-    
+
     if [ -n "${SHELL_RC}" ] && [ -f "${SHELL_RC}" ]; then
         if ! grep -q '.local/bin' "${SHELL_RC}"; then
             echo "" >> "${SHELL_RC}"
@@ -93,28 +86,20 @@ else
     fi
 fi
 
-# Check for audio player
-AUDIO_OK=false
+# Check for ffmpeg
 if command -v ffplay &>/dev/null; then
-    AUDIO_OK=true
     echo -e "  Audio: ${GREEN}ffplay found${RESET}"
 elif command -v mpv &>/dev/null; then
-    AUDIO_OK=true
     echo -e "  Audio: ${GREEN}mpv found${RESET}"
-elif command -v play &>/dev/null; then
-    AUDIO_OK=true
-    echo -e "  Audio: ${GREEN}SoX found${RESET}"
-fi
-
-if [ "$AUDIO_OK" = false ]; then
+else
     echo -e "  Audio: ${YELLOW}ffplay not found${RESET}"
     echo -e "  ${YELLOW}Install ffmpeg for sound: sudo apt install ffmpeg${RESET}"
-    echo -e "  ${DIM}Peon will fall back to terminal bell (no audio)${RESET}"
 fi
 
 echo ""
 echo -e "  ${BOLD}Usage: nmap -sV 10.0.0.1 | peon${RESET}"
 echo -e "  ${BOLD}Help:  peon --help${RESET}"
+echo -e "  ${BOLD}Sounds: peon --list${RESET}"
 echo -e "  ${DIM}Run 'source ~/.bashrc' (or ~/.zshrc) to update PATH${RESET}"
 echo ""
-echo -e "  ${GREEN}✓ Installed!${RESET} ${DIM}$(peon --version 2>/dev/null || echo '')${RESET}"
+echo -e "  ${GREEN}✓ Installed!${RESET}"
