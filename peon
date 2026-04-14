@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""
+peon - pipe any command through this and get notified when it finishes.
+
+Usage:
+  nmap -sV 192.168.1.1 | peon
+  long_command | peon --sound /path/to/bell.wav
+  long_command | peon --notify
+  long_command | peon --notify --message "nmap scan done"
+
+Passes stdin through to stdout, then plays a sound and optionally sends
+a Discord notification when EOF is reached (i.e. the upstream command finished).
+"""
+
+PEON_VERSION = "1.0.0"
+
+import argparse
+import shutil
+import subprocess
+import sys
+import os
+import time
+
+# Sound pack directory
+SOUND_PACK_DIR = os.path.expanduser("~/.local/share/peon/sounds")
+
+# Default completion sounds to try (in order)
+DEFAULT_SOUNDS = [
+    os.path.join(SOUND_PACK_DIR, "complete", "zug_zug.mp3"),
+    os.path.join(SOUND_PACK_DIR, "complete", "goal_complete.mp3"),
+    "/usr/share/sounds/freedesktop/stereo/complete.oga",
+    "/usr/share/sounds/freedesktop/stereo/bell.oga",
+    "/usr/share/sounds/ubuntu/stereo/dialog-information.ogg",
+]
+
+# Sound packs available for --pack
+SOUND_PACKS = {
+    "complete": os.path.join(SOUND_PACK_DIR, "complete"),
+    "log": os.path.join(SOUND_PACK_DIR, "log"),
+    "remind": os.path.join(SOUND_PACK_DIR, "remind"),
+    "slacking": os.path.join(SOUND_PACK_DIR, "slacking"),
+    "session": os.path.join(SOUND_PACK_DIR, "session_start"),
+    "terran": os.path.join(SOUND_PACK_DIR, "terran"),
+    "protoss": os.path.join(SOUND_PACK_DIR, "protoss"),
+    "zerg": os.path.join(SOUND_PACK_DIR, "zerg"),
+    "orc": os.path.join(SOUND_PACK_DIR, "orc"),
+    "wc2": os.path.join(SOUND_PACK_DIR, "wc2-human"),
+    "mixed": os.path.join(SOUND_PACK_DIR, "mixed-games"),
+}
+
+# Bundled fallback: generate a short beep using ffmpeg if available
+def _default_sound():
+    for path in DEFAULT_SOUNDS:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _is_wsl():
+    """Detect if running under WSL/WSL2."""
+    try:
+        with open("/proc/version", "r") as f:
+            return "microsoft" in f.read().lower()
+    except Exception:
+        return False
+
+
+def _wsl_winpath(path):
+    """Convert a Linux path to a Windows path via wslpath."""
+    try:
+        result = subprocess.run(
+            ["wslpath", "-w", path],
+            capture_output=True, text=True, timeout=5
+        )
+        return result.stdout.strip()
+    except Exception:
+        return path
+
+
+def _play_wsl(sound_path):
+    """Play sound on WSL2 by delegating to Windows."""
+    # Try PowerShell first (works on all Windows)
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+    if powershell and sound_path and os.path.exists(sound_path):
+        winpath = _wsl_winpath(sound_path)
+        try:
+            # Use Windows Media Player via PowerShell
+            subprocess.run(
+                [powershell, "-NoProfile", "-Command",
+                 f"(New-Object Media.SoundPlayer '{winpath}').PlaySync()"],
+                capture_output=True, timeout=10
+            )
+            return True
+        except Exception:
+            pass
+
+    # Fallback: Windows Beep via PowerShell
+    if powershell:
+        try:
+            subprocess.run(
+                [powershell, "-NoProfile", "-Command",
+                 "[Console]::Beep(880, 300)"],
+                capture_output=True, timeout=5
+            )
+            return True
+        except Exception:
+            pass
+
+    # Last resort: terminal bell
+    sys.stderr.write("\a")
+    sys.stderr.flush()
+    return False
+
+
+def play_sound(sound_path=None, volume=80):
+    """Play a notification sound using whatever player is available."""
+    if sound_path is None:
+        sound_path = _default_sound()
+
+    players = {
+        "paplay": lambda p: [p, sound_path],
+        "aplay": lambda p: [p, sound_path],
+        "ffplay": lambda p: [p, "-nodisp", "-autoexit", "-hide_banner", "-loglevel", "quiet", sound_path],
+        "mpv": lambda p: [p, "--no-video", "--really-quiet", f"--volume={volume}", sound_path],
+        "play": lambda p: [p, "-q", sound_path],  # SoX
+    }
+
+    for name, build_cmd in players.items():
+        path = shutil.which(name)
+        if path:
+            try:
+                subprocess.run(build_cmd(path), capture_output=True, timeout=10)
+                return True
+            except Exception:
+                continue
+
+    # WSL2 fallback: play via Windows PowerShell / PowerShell Core
+    if _is_wsl():
+        return _play_wsl(sound_path)
+
+    # macOS fallback: afplay
+    afplay = shutil.which("afplay")
+    if afplay:
+        try:
+            subprocess.run([afplay, sound_path], capture_output=True, timeout=10)
+            return True
+        except Exception:
+            pass
+
+    # Last resort: terminal bell
+    sys.stderr.write("\a")
+    sys.stderr.flush()
+    return False
+
+
+def generate_beep(output_path="/tmp/peon-beep.wav", duration=0.3, freq=880):
+    """Generate a short beep WAV using ffmpeg as fallback sound."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-f", "lavfi", "-i",
+             f"sine=frequency={freq}:duration={duration}",
+             "-af", f"afade=t=out:st=0:d={duration}",
+             output_path],
+            capture_output=True, timeout=5
+        )
+        return output_path if os.path.exists(output_path) else None
+    except Exception:
+        return None
+
+
+def send_notify(message="peon: command finished", exit_code=0):
+    """Send a notification via notify-send (Linux desktop) or terminal."""
+    msg = f"{message} (exit: {exit_code})"
+
+    # Try notify-send (desktop notification)
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(
+                ["notify-send", "-u", "normal", "-t", "5000", "peon", msg],
+                capture_output=True, timeout=5
+            )
+        except Exception:
+            pass
+
+    # Print to stderr so it doesn't mix with piped output
+    sys.stderr.write(f"\n🔔 {msg}\n")
+    sys.stderr.flush()
+
+
+def show_help():
+    B = "\033[1m"  # bold
+    G = "\033[32m"  # green
+    Y = "\033[33m"  # yellow
+    C = "\033[36m"  # cyan
+    D = "\033[2m"  # dim
+    R = "\033[0m"   # reset
+
+    print(f"""{B}{G}peon{R} - get notified when your command finishes
+
+{B}USAGE{R}
+  {C}<command>{R} | {G}peon{R} [{Y}options{R}]
+
+{B}DESCRIPTION{R}
+  Pipe any command through {G}peon{R}. It passes output through normally,
+  then plays a sound when the command finishes. Stop babysitting your terminal.
+
+{B}EXAMPLES{R}
+  {D}# Basic: plays 'Zug Zug' when nmap finishes{R}
+  nmap -sV 192.168.1.1 | {G}peon{R}
+
+  {D}# Random Orc voice every time{R}
+  make build | {G}peon{R} {Y}--pack orc{R}
+
+  {D}# Random Terran sound (Starcraft){R}
+  docker build . | {G}peon{R} {Y}--pack terran{R}
+
+  {D}# Desktop notification + sound{R}
+  cargo test | {G}peon{R} {Y}--notify{R}
+
+  {D}# Custom message with notification{R}
+  ./long_job.sh | {G}peon{R} {Y}-n -m "job done"{R}
+
+  {D}# Custom sound file{R}
+  npm install | {G}peon{R} {Y}--sound ~/bell.wav{R}
+
+  {D}# Silent (no sound, just stderr summary){R}
+  rsync -av src/ dest/ | {G}peon{R} {Y}--no-sound{R}
+
+  {D}# Random sound from any pack{R}
+  pip install . | {G}peon{R} {Y}--pack mixed{R}
+
+{B}OPTIONS{R}
+  {Y}-s, --sound PATH{R}     Custom sound file to play
+  {Y}-p, --pack PACK{R}      Random sound from a sound pack
+  {Y}-r, --random{R}         Random sound from the 'complete' pack
+  {Y}    --no-sound{R}       Skip sound, only print summary
+  {Y}-n, --notify{R}         Send desktop notification (notify-send)
+  {Y}-m, --message TEXT{R}   Custom notification message (with --notify)
+  {Y}    --volume 0-100{R}   Sound volume (default: 80)
+  {Y}    --beep{R}           Force generate a beep (no sound pack needed)
+  {Y}-e, --exit-code{R}      Read exit code from PEON_EXIT env var
+  {Y}-l, --list{R}           List all sound packs and their sounds
+  {Y}-h, --help{R}           Show this help
+
+{B}SOUND PACKS{R}""")
+    for name, path in SOUND_PACKS.items():
+        files = [f for f in os.listdir(path) if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
+        print(f"  {C}{name:12s}{R} ({len(files)} sounds)")
+    print(f"""
+  Run {G}peon --list{R} to see all individual sounds.
+
+{B}SOUND PACK DETAILS{R}
+  {C}complete{R}    Peon completion sounds ('Zug Zug', 'Goal Complete')
+  {C}log{R}          Peon log sounds ('Approve', 'Work Work', 'Proud')
+  {C}remind{R}       'Type Type Type', 'Code Review Hard', 'Human Weak'
+  {C}slacking{R}     'Falling Behind', 'Disappointed', 'Half Day'
+  {C}session{R}      'New Day', 'Human Back', 'Know The Rules'
+  {C}terran{R}       Starcraft Terran unit voices
+  {C}protoss{R}      Starcraft Protoss unit voices
+  {C}zerg{R}         Starcraft Zerg unit voices
+  {C}orc{R}          Warcraft 3 Orc/Peon voices
+  {C}wc2{R}          Warcraft 2 Human/Sapper voices
+  {C}mixed{R}        Mix of Starcraft, TF2, Helldivers, Dota sounds
+
+{B}HOW IT WORKS{R}
+  1. Pipes stdin to stdout (your output works normally)
+  2. Detects EOF (upstream command finished)
+  3. Plays a sound + optional desktop notification
+  4. Prints elapsed time and output size to stderr
+
+{B}TIPS{R}
+  {D}# Chain with exit code capture:{R}
+  nmap -sV 10.0.0.1; PEON_EXIT=$? echo | peon --exit-code --notify
+
+  {D}# Alias for your shell (add to .bashrc):{R}
+  alias pp='peon --pack orc --notify'
+  alias ppp='peon --pack mixed'
+
+{D}Inspired by PeonPing (https://github.com/PeonPing/peon-ping){R}
+""")
+
+
+def main():
+    # Custom help instead of argparse default
+    if "--version" in sys.argv:
+        print(f"peon v{PEON_VERSION}")
+        sys.exit(0)
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        show_help()
+        sys.exit(0)
+
+    parser = argparse.ArgumentParser(
+        description="Notify when a piped command finishes.",
+        usage="<command> | peon [options]",
+        add_help=False
+    )
+    parser.add_argument("--sound", "-s", help="Path to custom sound file")
+    parser.add_argument("--no-sound", action="store_true", help="Skip sound notification")
+    parser.add_argument("--notify", "-n", action="store_true", help="Send desktop notification")
+    parser.add_argument("--message", "-m", default="command finished", help="Custom notification message")
+    parser.add_argument("--exit-code", "-e", action="store_true", help="Read exit code from PEON_EXIT env var")
+    parser.add_argument("--volume", type=int, default=80, help="Sound volume 0-100 (default: 80)")
+    parser.add_argument("--beep", action="store_true", help="Force generate a beep sound")
+    parser.add_argument("--pack", "-p", help=f"Sound pack: {', '.join(SOUND_PACKS.keys())}. Random sound from pack.")
+    parser.add_argument("--random", "-r", action="store_true", help="Play a random sound from the complete pack")
+    parser.add_argument("--list", "-l", action="store_true", help="List available sound packs and exit")
+    args = parser.parse_args()
+
+    if args.list:
+        print("Available sound packs:")
+        for name, path in SOUND_PACKS.items():
+            files = [f for f in os.listdir(path) if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
+            print(f"  {name}: {len(files)} sounds ({path})")
+            for f in sorted(files):
+                print(f"    - {f}")
+        sys.exit(0)
+
+    start_time = time.time()
+
+    # Pass through stdin to stdout (chunked for large outputs)
+    bytes_written = 0
+    try:
+        while True:
+            chunk = sys.stdin.buffer.read(65536)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+            bytes_written += len(chunk)
+    except BrokenPipeError:
+        # Downstream consumer closed early, that's fine
+        pass
+
+    elapsed = time.time() - start_time
+    exit_code = int(os.environ.get("PEON_EXIT", 0)) if args.exit_code else 0
+
+    # Determine sound
+    sound_path = args.sound
+    if not args.no_sound:
+        if args.pack and args.pack in SOUND_PACKS:
+            import random
+            pack_dir = SOUND_PACKS[args.pack]
+            sounds = [os.path.join(pack_dir, f) for f in os.listdir(pack_dir)
+                      if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
+            if sounds:
+                sound_path = random.choice(sounds)
+        elif args.random:
+            import random
+            complete_dir = SOUND_PACKS["complete"]
+            sounds = [os.path.join(complete_dir, f) for f in os.listdir(complete_dir)
+                      if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
+            if sounds:
+                sound_path = random.choice(sounds)
+        if sound_path is None and _default_sound() is None:
+            sound_path = generate_beep()
+        if args.beep and sound_path is None:
+            sound_path = generate_beep()
+        if sound_path:
+            basename = os.path.basename(sound_path)
+            sys.stderr.write(f"🔔 Playing: {basename}\n")
+        play_sound(sound_path, args.volume)
+
+    # Desktop notification
+    if args.notify:
+        size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written > 1024 else f"{bytes_written}B"
+        elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
+        full_msg = f"{args.message} | {elapsed_str}, {size_str} output"
+        send_notify(full_msg, exit_code)
+
+    # Always print summary to stderr
+    size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written > 1024 else f"{bytes_written}B"
+    elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
+    sys.stderr.write(f"🔔 peon: done in {elapsed_str} ({size_str})\n")
+
+
+if __name__ == "__main__":
+    main()
