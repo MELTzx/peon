@@ -7,13 +7,11 @@ Usage:
   long_command | peon -s zug_zug
   long_command | peon --random
 
-Passes stdin through to stdout, then plays a sound when EOF is reached
-(i.e. the upstream command finished).
+Passes stdin through to stdout, then plays a sound when EOF is reached.
 """
 
-PEON_VERSION = "1.1.0"
+PEON_VERSION = "1.3.0"
 
-import argparse
 import shutil
 import subprocess
 import sys
@@ -27,7 +25,6 @@ DEFAULT_SOUND = os.path.join(SOUND_DIR, "peon-default.mp3")
 
 
 def _is_wsl():
-    """Detect if running under WSL/WSL2."""
     try:
         with open("/proc/version", "r") as f:
             return "microsoft" in f.read().lower()
@@ -36,7 +33,6 @@ def _is_wsl():
 
 
 def _wsl_winpath(path):
-    """Convert a Linux path to a Windows path via wslpath."""
     try:
         result = subprocess.run(
             ["wslpath", "-w", path],
@@ -48,7 +44,6 @@ def _wsl_winpath(path):
 
 
 def _play_wsl(sound_path):
-    """Play sound on WSL2 by delegating to Windows."""
     powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
     if powershell and sound_path and os.path.exists(sound_path):
         winpath = _wsl_winpath(sound_path)
@@ -64,8 +59,7 @@ def _play_wsl(sound_path):
     if powershell:
         try:
             subprocess.run(
-                [powershell, "-NoProfile", "-Command",
-                 "[Console]::Beep(880, 300)"],
+                [powershell, "-NoProfile", "-Command", "[Console]::Beep(880, 300)"],
                 capture_output=True, timeout=5
             )
             return True
@@ -76,8 +70,7 @@ def _play_wsl(sound_path):
     return False
 
 
-def play_sound(sound_path, volume=80):
-    """Play a notification sound using whatever player is available."""
+def play_sound(sound_path):
     if not sound_path or not os.path.exists(sound_path):
         sys.stderr.write("\a")
         sys.stderr.flush()
@@ -85,16 +78,13 @@ def play_sound(sound_path, volume=80):
 
     is_wav = sound_path.lower().endswith(".wav")
 
-    # Players that handle all formats (tried in order)
     players = {
         "ffplay": lambda p: [p, "-nodisp", "-autoexit", "-hide_banner",
                              "-loglevel", "quiet", sound_path],
-        "mpv": lambda p: [p, "--no-video", "--really-quiet",
-                          f"--volume={volume}", sound_path],
-        "play": lambda p: [p, "-q", sound_path],  # SoX
+        "mpv": lambda p: [p, "--no-video", "--really-quiet", sound_path],
+        "play": lambda p: [p, "-q", sound_path],
     }
 
-    # paplay/aplay only handle WAV natively
     if is_wav:
         players["paplay"] = lambda p: [p, sound_path]
         players["aplay"] = lambda p: [p, sound_path]
@@ -108,11 +98,9 @@ def play_sound(sound_path, volume=80):
             except Exception:
                 continue
 
-    # WSL2 fallback
     if _is_wsl():
         return _play_wsl(sound_path)
 
-    # macOS fallback
     afplay = shutil.which("afplay")
     if afplay:
         try:
@@ -121,40 +109,25 @@ def play_sound(sound_path, volume=80):
         except Exception:
             pass
 
-    # Last resort: terminal bell
     sys.stderr.write("\a")
     sys.stderr.flush()
     return False
 
 
 def resolve_sound(name):
-    """Resolve a sound name to a file path.
-
-    Accepts:
-      - Full path: /path/to/sound.mp3
-      - Name with ext: zug_zug.mp3
-      - Name without ext: zug_zug (auto-finds .mp3/.ogg/.wav/.oga)
-    """
+    """Resolve a sound name to a file path."""
     if os.path.isabs(name) and os.path.exists(name):
         return name
 
-    # Try exact match in sound dir
-    candidates = [
-        os.path.join(SOUND_DIR, name),
-        os.path.join(SOUND_DIR, name + ".ogg"),
-        os.path.join(SOUND_DIR, name + ".mp3"),
-        os.path.join(SOUND_DIR, name + ".wav"),
-        os.path.join(SOUND_DIR, name + ".oga"),
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
+    for ext in ("", ".ogg", ".mp3", ".wav", ".oga"):
+        candidate = os.path.join(SOUND_DIR, name + ext)
+        if os.path.exists(candidate):
+            return candidate
 
     return None
 
 
 def list_sounds():
-    """List all available sounds."""
     if not os.path.isdir(SOUND_DIR):
         print(f"No sounds directory: {SOUND_DIR}")
         return
@@ -167,7 +140,35 @@ def list_sounds():
     for s in sounds:
         name = s.rsplit(".", 1)[0]
         print(f"  {name}")
-    print(f"\nUsage: peon -s {sounds[0].rsplit('.', 1)[0] if sounds else 'sound_name'}")
+    if sounds:
+        print(f"\nUsage: peon -s {sounds[0].rsplit('.', 1)[0]}")
+
+
+def download_sounds():
+    import urllib.request
+    import json
+
+    API_URL = "https://api.github.com/repos/MELTzx/peon/contents/sounds"
+    print("Downloading full sound library...")
+    try:
+        req = urllib.request.Request(API_URL, headers={"User-Agent": "peon"})
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read())
+            sounds = [f for f in data if f["name"].endswith((".mp3", ".wav", ".ogg", ".oga"))]
+            sounds = [f for f in sounds if f["name"] != "peon-default.mp3"]
+            print(f"  Downloading {len(sounds)} sounds (~4.7MB)...")
+            ok = 0
+            for s in sounds:
+                out = os.path.join(SOUND_DIR, s["name"])
+                urllib.request.urlretrieve(s["download_url"], out)
+                ok += 1
+                if ok % 20 == 0:
+                    print(f"  {ok}/{len(sounds)}...")
+            print(f"  Done! {ok + 1} sounds total.")
+            print(f"  Run 'peon --list' to see all sounds.")
+    except Exception as e:
+        print(f"  Failed: {e}")
+        sys.exit(1)
 
 
 def show_help():
@@ -177,15 +178,6 @@ def show_help():
     C = "\033[36m"
     D = "\033[2m"
     R = "\033[0m"
-
-    # Count available sounds
-    sound_count = 0
-    default_mark = ""
-    if os.path.isdir(SOUND_DIR):
-        sound_count = len([f for f in os.listdir(SOUND_DIR)
-                          if f.endswith((".mp3", ".wav", ".ogg", ".oga"))])
-        if os.path.exists(DEFAULT_SOUND):
-            default_mark = os.path.basename(DEFAULT_SOUND)
 
     print(f"""{B}{G}peon{R} v{PEON_VERSION} - get notified when your command finishes
 
@@ -197,7 +189,7 @@ def show_help():
   then plays a sound when the command finishes. Stop babysitting your terminal.
 
 {B}EXAMPLES{R}
-  {D}# Default sound (PeonReady1){R}
+  {D}# Default sound{R}
   nmap -sV 192.168.1.1 | {G}peon{R}
 
   {D}# Pick a specific sound{R}
@@ -207,51 +199,35 @@ def show_help():
   {D}# Random sound from the library{R}
   docker build . | {G}peon{R} {Y}--random{R}
 
-  {D}# Desktop notification + sound{R}
-  npm install | {G}peon{R} {Y}--notify{R}
-
   {D}# Custom sound file{R}
-  ./long_job.sh | {G}peon{R} {Y}--sound ~/bell.wav{R}
+  ./long_job.sh | {G}peon{R} {Y}-s ~/bell.wav{R}
 
-  {D}# Silent (no sound, just summary){R}
-  rsync -av src/ dest/ | {G}peon{R} {Y}--no-sound{R}
+  {D}# Over SSH{R}
+  ssh server "make build" | {G}peon{R} {Y}-s zug_zug{R}
 
 {B}OPTIONS{R}
-  {Y}-s, --sound NAME{R}     Play a specific sound (by name or path)
-  {Y}-r, --random{R}         Play a random sound
-  {Y}    --no-sound{R}       Skip sound, only print summary
-  {Y}-n, --notify{R}         Send desktop notification (notify-send)
-  {Y}-m, --message TEXT{R}   Custom notification message (with --notify)
-  {Y}    --volume 0-100{R}   Sound volume (default: 80)
-  {Y}-l, --list{R}           List installed sounds
-  {Y}    --download-sounds{R} Download all 159 sounds (~4.7MB)
-  {Y}-v, --version{R}        Show version
-  {Y}-h, --help{R}           Show this help
+  {Y}-s, --sound NAME{R}       Play a specific sound (by name or path)
+  {Y}-r, --random{R}           Play a random sound from library
+  {Y}-l, --list{R}             List installed sounds
+  {Y}    --download-sounds{R}  Download all 159 sounds (~4.7MB)
+  {Y}-v, --version{R}          Show version
+  {Y}-h, --help{R}             Show this help
 
 {B}POPULAR SOUNDS{R}
-  {C}peon-default{R}       Default notification sound (always installed)
-  {C}PeonReady1{R}          WC3 Peon ready sound
-  {C}zug_zug{R}            Classic peon
-  {C}goal_complete{R}      Mission accomplished
-  {C}BattlecruiserOperational{R}  Terran battlecruiser
-  {C}approve{R}            Peon approval
-  {C}impressed{R}          Peon impressed
-  {C}PeonWarcry1{R}        Orc peon war cry
+  {C}peon-default{R}           Default notification (always installed)
+  {C}PeonReady1{R}             WC3 Peon ready
+  {C}zug_zug{R}               Classic peon
+  {C}goal_complete{R}          Mission accomplished
+  {C}BattlecruiserOperational{R}  Starcraft Terran
+  {C}PeonWarcry1{R}            Orc war cry
+  {C}wc2sapper-kaboom{R}       WC2 Sapper
 
   Run {G}peon --download-sounds{R} to get all 159 sounds (~4.7MB).
   Run {G}peon --list{R} to see installed sounds.
 
-{B}HOW IT WORKS{R}
-  1. Pipes stdin to stdout (your output works normally)
-  2. Detects EOF (upstream command finished)
-  3. Plays the selected sound
-  4. Prints elapsed time and output size to stderr
-
 {B}REQUIREMENTS{R}
   {C}ffmpeg{R} (for sound) - sudo apt install ffmpeg
-  {C}Python 3.6+{R} (usually pre-installed)
-
-{D}Requires: ffmpeg (sudo apt install ffmpeg){R}
+  {C}Python 3.6+{R}
 """)
 
 
@@ -264,64 +240,42 @@ def main():
         show_help()
         sys.exit(0)
 
-    parser = argparse.ArgumentParser(
-        description="Notify when a piped command finishes.",
-        usage="<command> | peon [options]",
-        add_help=False
-    )
-    parser.add_argument("--sound", "-s", default=None,
-                        help="Sound name or path")
-    parser.add_argument("--random", "-r", action="store_true",
-                        help="Play a random sound")
-    parser.add_argument("--no-sound", action="store_true",
-                        help="Skip sound notification")
-    parser.add_argument("--notify", "-n", action="store_true",
-                        help="Send desktop notification")
-    parser.add_argument("--message", "-m", default="command finished",
-                        help="Custom notification message")
-    parser.add_argument("--volume", type=int, default=80,
-                        help="Sound volume 0-100 (default: 80)")
-    parser.add_argument("--list", "-l", action="store_true",
-                        help="List all available sounds")
-    parser.add_argument("--download-sounds", action="store_true",
-                        help="Download all 159 sounds (~4.7MB)")
-    args = parser.parse_args()
+    # Minimal arg parsing
+    args = {
+        "sound": None,
+        "random": False,
+        "list": False,
+        "download": False,
+    }
 
-    if args.download_sounds:
-        import urllib.request
-        API_URL = f"https://api.github.com/repos/MELTzx/peon/contents/sounds"
-        print("Downloading full sound library...")
-        try:
-            with urllib.request.urlopen(API_URL) as resp:
-                import json
-                data = json.loads(resp.read())
-                sounds = [f for f in data if f["name"].endswith((".mp3", ".wav", ".ogg", ".oga"))]
-                # Skip peon-default.mp3 (already installed)
-                sounds = [f for f in sounds if f["name"] != "peon-default.mp3"]
-                print(f"  Downloading {len(sounds)} sounds...")
-                ok = 0
-                for s in sounds:
-                    out = os.path.join(SOUND_DIR, s["name"])
-                    urllib.request.urlretrieve(s["download_url"], out)
-                    ok += 1
-                    if ok % 20 == 0:
-                        print(f"  {ok}/{len(sounds)}...")
-                print(f"  ✓ Downloaded {ok} sounds ({ok + 1} total including default)")
-                print(f"  Run 'peon --list' to see all sounds.")
-        except Exception as e:
-            print(f"  ✗ Failed: {e}")
-            print(f"  Try: curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/install-sounds.sh | bash")
+    i = 1
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a in ("-s", "--sound") and i + 1 < len(sys.argv):
+            args["sound"] = sys.argv[i + 1]
+            i += 2
+        elif a in ("-r", "--random"):
+            args["random"] = True
+            i += 1
+        elif a in ("-l", "--list"):
+            args["list"] = True
+            i += 1
+        elif a == "--download-sounds":
+            args["download"] = True
+            i += 1
+        else:
+            sys.stderr.write(f"Unknown option: {a}\n")
+            sys.exit(1)
+
+    if args["download"]:
+        download_sounds()
         sys.exit(0)
 
-    if args.list:
+    if args["list"]:
         list_sounds()
         sys.exit(0)
 
     start_time = time.time()
-
-    # If no sounds directory exists, tell user how to get sounds
-    if not os.path.isdir(SOUND_DIR) or not os.path.exists(DEFAULT_SOUND):
-        sys.stderr.write("⚠ No sounds found. Run: peon --download-sounds\n")
 
     # Pass through stdin to stdout
     bytes_written = 0
@@ -339,52 +293,34 @@ def main():
     elapsed = time.time() - start_time
 
     # Determine which sound to play
-    if not args.no_sound:
-        sound_path = None
+    sound_path = None
 
-        if args.sound:
-            # User specified a sound by name or path
-            sound_path = resolve_sound(args.sound)
-            if not sound_path:
-                sys.stderr.write(f"⚠ Sound not found: {args.sound}\n")
-                sys.stderr.write("  Run 'peon --list' to see available sounds\n")
-
-        if not sound_path and args.random:
-            import random
-            if os.path.isdir(SOUND_DIR):
-                sounds = [os.path.join(SOUND_DIR, f) for f in os.listdir(SOUND_DIR)
-                          if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
-                if sounds:
-                    sound_path = random.choice(sounds)
-
+    if args["sound"]:
+        sound_path = resolve_sound(args["sound"])
         if not sound_path:
-            sound_path = DEFAULT_SOUND
+            sys.stderr.write(f"Sound not found: {args['sound']}\n")
+            sys.stderr.write("Run 'peon --list' to see available sounds\n")
 
-        if sound_path and os.path.exists(sound_path):
-            basename = os.path.basename(sound_path)
-            sys.stderr.write(f"🔔 {basename}\n")
-        play_sound(sound_path, args.volume)
+    if not sound_path and args["random"]:
+        import random
+        if os.path.isdir(SOUND_DIR):
+            sounds = [os.path.join(SOUND_DIR, f) for f in os.listdir(SOUND_DIR)
+                      if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
+            if sounds:
+                sound_path = random.choice(sounds)
 
-    # Desktop notification
-    if args.notify:
-        size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written > 1024 else f"{bytes_written}B"
-        elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
-        full_msg = f"{args.message} | {elapsed_str}, {size_str} output"
+    if not sound_path:
+        sound_path = DEFAULT_SOUND
 
-        if shutil.which("notify-send"):
-            try:
-                subprocess.run(
-                    ["notify-send", "-u", "normal", "-t", "5000", "peon", full_msg],
-                    capture_output=True, timeout=5
-                )
-            except Exception:
-                pass
-        sys.stderr.write(f"🔔 {full_msg}\n")
+    if sound_path and os.path.exists(sound_path):
+        basename = os.path.basename(sound_path)
+        sys.stderr.write(f"🔔 {basename}\n")
+    play_sound(sound_path)
 
-    # Always print summary to stderr
+    # Summary to stderr
     size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written > 1024 else f"{bytes_written}B"
     elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
-    sys.stderr.write(f"🔔 peon: done in {elapsed_str} ({size_str})\n")
+    sys.stderr.write(f"peon: done in {elapsed_str} ({size_str})\n")
 
 
 if __name__ == "__main__":
