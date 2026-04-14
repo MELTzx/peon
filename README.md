@@ -1,4 +1,8 @@
-# peon 🔔
+<div align="center">
+  <img src="peon-banner.png" alt="peon" width="600">
+</div>
+
+<br>
 
 Get a sound notification when your command finishes. Stop babysitting your terminal.
 
