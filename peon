@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-peon - pipe any command through this and get notified when it finishes.
+peon - get notified when your command finishes.
 
 Usage:
-  nmap -sV 192.168.1.1 | peon
-  long_command | peon -s zug_zug
-  long_command | peon --random
-
-Passes stdin through to stdout, then plays a sound when EOF is reached.
+  nmap -sV 192.168.1.1 && peon        standalone mode
+  nmap -sV 192.168.1.1 | peon          pipe mode (passes output through)
+  peon -s zug_zug                      just play a sound
 """
 
-PEON_VERSION = "1.3.0"
+PEON_VERSION = "1.4.0"
 
 import shutil
 import subprocess
@@ -19,8 +17,6 @@ import os
 import time
 
 SOUND_DIR = os.path.expanduser("~/.local/share/peon/sounds")
-
-# Default sound (shipped with install, always available)
 DEFAULT_SOUND = os.path.join(SOUND_DIR, "peon-default.mp3")
 
 
@@ -34,10 +30,7 @@ def _is_wsl():
 
 def _wsl_winpath(path):
     try:
-        result = subprocess.run(
-            ["wslpath", "-w", path],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["wslpath", "-w", path], capture_output=True, text=True, timeout=5)
         return result.stdout.strip()
     except Exception:
         return path
@@ -48,20 +41,16 @@ def _play_wsl(sound_path):
     if powershell and sound_path and os.path.exists(sound_path):
         winpath = _wsl_winpath(sound_path)
         try:
-            subprocess.run(
-                [powershell, "-NoProfile", "-Command",
-                 f"(New-Object Media.SoundPlayer '{winpath}').PlaySync()"],
-                capture_output=True, timeout=10
-            )
+            subprocess.run([powershell, "-NoProfile", "-Command",
+                            f"(New-Object Media.SoundPlayer '{winpath}').PlaySync()"],
+                           capture_output=True, timeout=10)
             return True
         except Exception:
             pass
     if powershell:
         try:
-            subprocess.run(
-                [powershell, "-NoProfile", "-Command", "[Console]::Beep(880, 300)"],
-                capture_output=True, timeout=5
-            )
+            subprocess.run([powershell, "-NoProfile", "-Command", "[Console]::Beep(880, 300)"],
+                           capture_output=True, timeout=5)
             return True
         except Exception:
             pass
@@ -79,8 +68,7 @@ def play_sound(sound_path):
     is_wav = sound_path.lower().endswith(".wav")
 
     players = {
-        "ffplay": lambda p: [p, "-nodisp", "-autoexit", "-hide_banner",
-                             "-loglevel", "quiet", sound_path],
+        "ffplay": lambda p: [p, "-nodisp", "-autoexit", "-hide_banner", "-loglevel", "quiet", sound_path],
         "mpv": lambda p: [p, "--no-video", "--really-quiet", sound_path],
         "play": lambda p: [p, "-q", sound_path],
     }
@@ -115,15 +103,12 @@ def play_sound(sound_path):
 
 
 def resolve_sound(name):
-    """Resolve a sound name to a file path."""
     if os.path.isabs(name) and os.path.exists(name):
         return name
-
     for ext in ("", ".ogg", ".mp3", ".wav", ".oga"):
         candidate = os.path.join(SOUND_DIR, name + ext)
         if os.path.exists(candidate):
             return candidate
-
     return None
 
 
@@ -131,15 +116,10 @@ def list_sounds():
     if not os.path.isdir(SOUND_DIR):
         print(f"No sounds directory: {SOUND_DIR}")
         return
-
-    sounds = sorted([
-        f for f in os.listdir(SOUND_DIR)
-        if f.endswith((".mp3", ".wav", ".ogg", ".oga"))
-    ])
+    sounds = sorted(f for f in os.listdir(SOUND_DIR) if f.endswith((".mp3", ".wav", ".ogg", ".oga")))
     print(f"Available sounds ({len(sounds)} total):\n")
     for s in sounds:
-        name = s.rsplit(".", 1)[0]
-        print(f"  {name}")
+        print(f"  {s.rsplit('.', 1)[0]}")
     if sounds:
         print(f"\nUsage: peon -s {sounds[0].rsplit('.', 1)[0]}")
 
@@ -182,52 +162,46 @@ def show_help():
     print(f"""{B}{G}peon{R} v{PEON_VERSION} - get notified when your command finishes
 
 {B}USAGE{R}
-  {C}<command>{R} | {G}peon{R} [{Y}options{R}]
-
-{B}DESCRIPTION{R}
-  Pipe any command through {G}peon{R}. It passes output through normally,
-  then plays a sound when the command finishes. Stop babysitting your terminal.
+  {C}<command>{R} && {G}peon{R}         play sound when command succeeds
+  {C}<command>{R} | {G}peon{R}          pipe mode: pass output through, play sound when done
+  {G}peon{R}                        just play the default sound
 
 {B}EXAMPLES{R}
-  {D}# Default sound{R}
+  {D}# After a command finishes{R}
+  nmap -sV 192.168.1.1 && {G}peon{R}
+
+  {D}# Piped (output passes through){R}
   nmap -sV 192.168.1.1 | {G}peon{R}
 
   {D}# Pick a specific sound{R}
-  make build | {G}peon{R} {Y}-s zug_zug{R}
-  cargo test | {G}peon{R} {Y}-s BattlecruiserOperational{R}
+  make build && {G}peon{R} {Y}-s zug_zug{R}
 
-  {D}# Random sound from the library{R}
+  {D}# Random sound{R}
   docker build . | {G}peon{R} {Y}--random{R}
 
-  {D}# Custom sound file{R}
-  ./long_job.sh | {G}peon{R} {Y}-s ~/bell.wav{R}
-
   {D}# Over SSH{R}
-  ssh server "make build" | {G}peon{R} {Y}-s zug_zug{R}
+  ssh server "make build" && {G}peon{R}
 
 {B}OPTIONS{R}
   {Y}-s, --sound NAME{R}       Play a specific sound (by name or path)
-  {Y}-r, --random{R}           Play a random sound from library
+  {Y}-r, --random{R}           Play a random sound
   {Y}-l, --list{R}             List installed sounds
   {Y}    --download-sounds{R}  Download all 159 sounds (~4.7MB)
   {Y}-v, --version{R}          Show version
   {Y}-h, --help{R}             Show this help
 
 {B}POPULAR SOUNDS{R}
-  {C}peon-default{R}           Default notification (always installed)
+  {C}peon-default{R}            Default (always installed)
   {C}PeonReady1{R}             WC3 Peon ready
   {C}zug_zug{R}               Classic peon
   {C}goal_complete{R}          Mission accomplished
   {C}BattlecruiserOperational{R}  Starcraft Terran
   {C}PeonWarcry1{R}            Orc war cry
-  {C}wc2sapper-kaboom{R}       WC2 Sapper
 
-  Run {G}peon --download-sounds{R} to get all 159 sounds (~4.7MB).
-  Run {G}peon --list{R} to see installed sounds.
+  Run {G}peon --download-sounds{R} to get all 159 sounds.
 
-{B}REQUIREMENTS{R}
-  {C}ffmpeg{R} (for sound) - sudo apt install ffmpeg
-  {C}Python 3.6+{R}
+{B}REQUIRES{R}
+  {C}ffmpeg{R} - sudo apt install ffmpeg
 """)
 
 
@@ -240,87 +214,74 @@ def main():
         show_help()
         sys.exit(0)
 
-    # Minimal arg parsing
-    args = {
-        "sound": None,
-        "random": False,
-        "list": False,
-        "download": False,
-    }
+    # Parse args
+    sound_name = None
+    do_random = False
 
     i = 1
     while i < len(sys.argv):
         a = sys.argv[i]
         if a in ("-s", "--sound") and i + 1 < len(sys.argv):
-            args["sound"] = sys.argv[i + 1]
+            sound_name = sys.argv[i + 1]
             i += 2
         elif a in ("-r", "--random"):
-            args["random"] = True
+            do_random = True
             i += 1
         elif a in ("-l", "--list"):
-            args["list"] = True
-            i += 1
+            list_sounds()
+            sys.exit(0)
         elif a == "--download-sounds":
-            args["download"] = True
-            i += 1
+            download_sounds()
+            sys.exit(0)
         else:
             sys.stderr.write(f"Unknown option: {a}\n")
             sys.exit(1)
 
-    if args["download"]:
-        download_sounds()
-        sys.exit(0)
-
-    if args["list"]:
-        list_sounds()
-        sys.exit(0)
-
     start_time = time.time()
 
-    # Pass through stdin to stdout
+    # Check if stdin has data (pipe mode) or standalone mode
+    has_stdin = not sys.stdin.isatty()
     bytes_written = 0
-    try:
-        while True:
-            chunk = sys.stdin.buffer.read(65536)
-            if not chunk:
-                break
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
-            bytes_written += len(chunk)
-    except BrokenPipeError:
-        pass
+
+    if has_stdin:
+        try:
+            while True:
+                chunk = sys.stdin.buffer.read(65536)
+                if not chunk:
+                    break
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                bytes_written += len(chunk)
+        except BrokenPipeError:
+            pass
 
     elapsed = time.time() - start_time
 
-    # Determine which sound to play
+    # Pick sound
     sound_path = None
-
-    if args["sound"]:
-        sound_path = resolve_sound(args["sound"])
+    if sound_name:
+        sound_path = resolve_sound(sound_name)
         if not sound_path:
-            sys.stderr.write(f"Sound not found: {args['sound']}\n")
+            sys.stderr.write(f"Sound not found: {sound_name}\n")
             sys.stderr.write("Run 'peon --list' to see available sounds\n")
-
-    if not sound_path and args["random"]:
+    if not sound_path and do_random:
         import random
         if os.path.isdir(SOUND_DIR):
             sounds = [os.path.join(SOUND_DIR, f) for f in os.listdir(SOUND_DIR)
                       if f.endswith((".mp3", ".wav", ".ogg", ".oga"))]
             if sounds:
                 sound_path = random.choice(sounds)
-
     if not sound_path:
         sound_path = DEFAULT_SOUND
 
     if sound_path and os.path.exists(sound_path):
-        basename = os.path.basename(sound_path)
-        sys.stderr.write(f"🔔 {basename}\n")
+        sys.stderr.write(f"🔔 {os.path.basename(sound_path)}\n")
     play_sound(sound_path)
 
-    # Summary to stderr
-    size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written > 1024 else f"{bytes_written}B"
-    elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
-    sys.stderr.write(f"peon: done in {elapsed_str} ({size_str})\n")
+    if has_stdin:
+        size_str = f"{bytes_written / 1024:.1f}KB" if bytes_written > 1024 else f"{bytes_written}B"
+        elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
+        sys.stderr.write(f"peon: done in {elapsed_str} ({size_str})\n")
 
 
 if __name__ == "__main__":

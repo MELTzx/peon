@@ -1,9 +1,9 @@
 # peon 🔔
 
-Pipe any command through **peon** and get a sound notification when it finishes. Stop babysitting your terminal.
+Get a sound notification when your command finishes. Stop babysitting your terminal.
 
-```
-nmap -sV 192.168.1.1 | peon
+```bash
+nmap -sV 192.168.1.1 && peon
 ```
 
 ## Install
@@ -12,14 +12,12 @@ nmap -sV 192.168.1.1 | peon
 curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/install.sh | bash
 ```
 
-Downloads the `peon` script + 1 default sound (~36KB). That's it.
+Downloads `peon` + 1 default sound (~36KB). That's it.
 
 **Want 159 game sounds?**
 ```bash
 peon --download-sounds
 ```
-
-Warcraft, Starcraft, TF2, Helldivers, Dota sounds (~4.7MB). Only if you want them.
 
 **Uninstall:**
 ```bash
@@ -29,21 +27,20 @@ curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/uninstall.sh | bas
 ## Usage
 
 ```bash
-# Default sound
+# After a command finishes
+nmap -sV 192.168.1.1 && peon
+
+# Piped (passes output through)
 nmap -sV 192.168.1.1 | peon
 
 # Pick a specific sound
-make build | peon -s zug_zug
-cargo test | peon -s BattlecruiserOperational
+make build && peon -s zug_zug
 
 # Random sound
 docker build . | peon --random
 
-# Custom sound file
-./long_job.sh | peon -s ~/bell.wav
-
-# Over SSH
-ssh server "make build" | peon -s zug_zug
+# Over SSH (sound plays locally)
+ssh server "make build" && peon
 
 # List all sounds
 peon --list
