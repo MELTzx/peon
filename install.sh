@@ -95,17 +95,21 @@ fi
 
 # Check for audio player
 AUDIO_OK=false
-for player in paplay aplay ffplay mpv play powershell.exe afplay; do
-    if command -v "$player" &>/dev/null; then
-        AUDIO_OK=true
-        echo -e "  Audio: ${GREEN}${player} found${RESET}"
-        break
-    fi
-done
+if command -v ffplay &>/dev/null; then
+    AUDIO_OK=true
+    echo -e "  Audio: ${GREEN}ffplay found${RESET}"
+elif command -v mpv &>/dev/null; then
+    AUDIO_OK=true
+    echo -e "  Audio: ${GREEN}mpv found${RESET}"
+elif command -v play &>/dev/null; then
+    AUDIO_OK=true
+    echo -e "  Audio: ${GREEN}SoX found${RESET}"
+fi
 
 if [ "$AUDIO_OK" = false ]; then
-    echo -e "  Audio: ${YELLOW}No audio player found${RESET}"
-    echo -e "  ${DIM}Install ffmpeg, mpv, or pulseaudio for sound playback${RESET}"
+    echo -e "  Audio: ${YELLOW}ffplay not found${RESET}"
+    echo -e "  ${YELLOW}Install ffmpeg for sound: sudo apt install ffmpeg${RESET}"
+    echo -e "  ${DIM}Peon will fall back to terminal bell (no audio)${RESET}"
 fi
 
 echo ""

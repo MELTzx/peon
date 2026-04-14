@@ -122,8 +122,8 @@ Run `peon --list` to see every sound in each pack.
 
 ## Requirements
 
+- **ffmpeg** (required for sound playback on most systems) - `sudo apt install ffmpeg`
 - Python 3.6+ (usually pre-installed)
-- An audio player (ffmpeg, mpv, pulseaudio, or SoX recommended)
 - No other dependencies
 
 ## Options
