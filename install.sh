@@ -36,29 +36,17 @@ else
 fi
 chmod +x "${INSTALL_DIR}/peon"
 
-# Download sounds (all flat in sounds/ dir)
-echo -e "  Downloading ${GREEN}sounds${RESET}..."
-
-SUCCESS=0
-FAIL=0
-
-# Get file list from GitHub API
-files=$(curl -fsSL "https://api.github.com/repos/${REPO}/contents/sounds" 2>/dev/null \
-    | grep '"name"' | sed 's/.*"name": "//;s/".*//' \
-    | grep -E '\.(mp3|wav|ogg|oga)$' || true)
-
-if [ -n "$files" ]; then
-    while IFS= read -r fname; do
-        if curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/sounds/${fname}" \
-            -o "${SOUND_DIR}/${fname}" 2>/dev/null; then
-            SUCCESS=$((SUCCESS + 1))
-        else
-            FAIL=$((FAIL + 1))
-        fi
-    done <<< "$files"
+# Download only the default sound (~36KB)
+echo -e "  Downloading ${GREEN}default sound${RESET} (~36KB)..."
+if command -v curl &>/dev/null; then
+    curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/sounds/peon-default.mp3" \
+        -o "${SOUND_DIR}/peon-default.mp3"
+elif command -v wget &>/dev/null; then
+    wget -q "https://raw.githubusercontent.com/${REPO}/${BRANCH}/sounds/peon-default.mp3" \
+        -O "${SOUND_DIR}/peon-default.mp3"
 fi
 
-echo -e "  Sounds: ${GREEN}${SUCCESS} downloaded${RESET}${DIM}(${FAIL} failed)${RESET}"
+echo -e "  ${DIM}Want 159 game sounds? Run: peon --download-sounds${RESET}"
 
 # Check PATH
 if echo ":${PATH}:" | grep -q ":${INSTALL_DIR}:"; then
@@ -68,7 +56,6 @@ else
     echo -e "  ${DIM}Add this to your ~/.bashrc or ~/.zshrc:${RESET}"
     echo -e "  ${DIM}  export PATH=\"\${HOME}/.local/bin:\$PATH\"${RESET}"
 
-    # Auto-add to shell rc
     SHELL_RC=""
     if [ -n "${ZSH_VERSION:-}" ]; then
         SHELL_RC="${HOME}/.zshrc"
@@ -99,7 +86,7 @@ fi
 echo ""
 echo -e "  ${BOLD}Usage: nmap -sV 10.0.0.1 | peon${RESET}"
 echo -e "  ${BOLD}Help:  peon --help${RESET}"
-echo -e "  ${BOLD}Sounds: peon --list${RESET}"
+echo -e "  ${BOLD}More sounds: peon --download-sounds${RESET}"
 echo -e "  ${DIM}Run 'source ~/.bashrc' (or ~/.zshrc) to update PATH${RESET}"
 echo ""
 echo -e "  ${GREEN}✓ Installed!${RESET}"

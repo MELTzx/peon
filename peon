@@ -22,8 +22,8 @@ import time
 
 SOUND_DIR = os.path.expanduser("~/.local/share/peon/sounds")
 
-# Default sound
-DEFAULT_SOUND = os.path.join(SOUND_DIR, "PeonReady1.ogg")
+# Default sound (shipped with install, always available)
+DEFAULT_SOUND = os.path.join(SOUND_DIR, "peon-default.mp3")
 
 
 def _is_wsl():
@@ -223,21 +223,23 @@ def show_help():
   {Y}-n, --notify{R}         Send desktop notification (notify-send)
   {Y}-m, --message TEXT{R}   Custom notification message (with --notify)
   {Y}    --volume 0-100{R}   Sound volume (default: 80)
-  {Y}-l, --list{R}           List all available sounds
+  {Y}-l, --list{R}           List installed sounds
+  {Y}    --download-sounds{R} Download all 159 sounds (~4.7MB)
   {Y}-v, --version{R}        Show version
   {Y}-h, --help{R}           Show this help
 
-{B}SOUNDS{R} ({sound_count} available, default: {default_mark})
-  Run {G}peon --list{R} to see all sounds.
-
 {B}POPULAR SOUNDS{R}
-  {C}PeonReady1{R}            Default peon ready sound
-  {C}zug_zug{R}              Classic peon
-  {C}goal_complete{R}        Mission accomplished
+  {C}peon-default{R}       Default notification sound (always installed)
+  {C}PeonReady1{R}          WC3 Peon ready sound
+  {C}zug_zug{R}            Classic peon
+  {C}goal_complete{R}      Mission accomplished
   {C}BattlecruiserOperational{R}  Terran battlecruiser
-  {C}approve{R}              Peon approval
-  {C}impressed{R}            Peon impressed
-  {C}PeonWarcry1{R}          Orc peon war cry
+  {C}approve{R}            Peon approval
+  {C}impressed{R}          Peon impressed
+  {C}PeonWarcry1{R}        Orc peon war cry
+
+  Run {G}peon --download-sounds{R} to get all 159 sounds (~4.7MB).
+  Run {G}peon --list{R} to see installed sounds.
 
 {B}HOW IT WORKS{R}
   1. Pipes stdin to stdout (your output works normally)
@@ -281,13 +283,45 @@ def main():
                         help="Sound volume 0-100 (default: 80)")
     parser.add_argument("--list", "-l", action="store_true",
                         help="List all available sounds")
+    parser.add_argument("--download-sounds", action="store_true",
+                        help="Download all 159 sounds (~4.7MB)")
     args = parser.parse_args()
+
+    if args.download_sounds:
+        import urllib.request
+        API_URL = f"https://api.github.com/repos/MELTzx/peon/contents/sounds"
+        print("Downloading full sound library...")
+        try:
+            with urllib.request.urlopen(API_URL) as resp:
+                import json
+                data = json.loads(resp.read())
+                sounds = [f for f in data if f["name"].endswith((".mp3", ".wav", ".ogg", ".oga"))]
+                # Skip peon-default.mp3 (already installed)
+                sounds = [f for f in sounds if f["name"] != "peon-default.mp3"]
+                print(f"  Downloading {len(sounds)} sounds...")
+                ok = 0
+                for s in sounds:
+                    out = os.path.join(SOUND_DIR, s["name"])
+                    urllib.request.urlretrieve(s["download_url"], out)
+                    ok += 1
+                    if ok % 20 == 0:
+                        print(f"  {ok}/{len(sounds)}...")
+                print(f"  ✓ Downloaded {ok} sounds ({ok + 1} total including default)")
+                print(f"  Run 'peon --list' to see all sounds.")
+        except Exception as e:
+            print(f"  ✗ Failed: {e}")
+            print(f"  Try: curl -fsSL https://raw.githubusercontent.com/MELTzx/peon/main/install-sounds.sh | bash")
+        sys.exit(0)
 
     if args.list:
         list_sounds()
         sys.exit(0)
 
     start_time = time.time()
+
+    # If no sounds directory exists, tell user how to get sounds
+    if not os.path.isdir(SOUND_DIR) or not os.path.exists(DEFAULT_SOUND):
+        sys.stderr.write("⚠ No sounds found. Run: peon --download-sounds\n")
 
     # Pass through stdin to stdout
     bytes_written = 0
