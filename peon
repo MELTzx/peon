@@ -117,13 +117,19 @@ def play_sound(sound_path=None, volume=80):
     if sound_path is None:
         sound_path = _default_sound()
 
+    is_wav = sound_path and sound_path.lower().endswith(".wav") if sound_path else False
+
+    # Players that handle all formats
     players = {
         "paplay": lambda p: [p, sound_path],
-        "aplay": lambda p: [p, sound_path],
         "ffplay": lambda p: [p, "-nodisp", "-autoexit", "-hide_banner", "-loglevel", "quiet", sound_path],
         "mpv": lambda p: [p, "--no-video", "--really-quiet", f"--volume={volume}", sound_path],
         "play": lambda p: [p, "-q", sound_path],  # SoX
     }
+
+    # aplay and afplay only handle WAV, skip for MP3/OGG
+    if is_wav:
+        players["aplay"] = lambda p: [p, sound_path]
 
     for name, build_cmd in players.items():
         path = shutil.which(name)
